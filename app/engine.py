@@ -1,4 +1,9 @@
-from faster_whisper import BatchedInferencePipeline, WhisperModel
+from faster_whisper import WhisperModel
+
+try:
+    from faster_whisper import BatchedInferencePipeline
+except ImportError:
+    BatchedInferencePipeline = None
 
 
 class WhisperEngine:
@@ -8,14 +13,22 @@ class WhisperEngine:
             device=device,
             compute_type=compute_type
         )
-        self.pipeline = BatchedInferencePipeline(model=self.model)
+        self.pipeline = (
+            BatchedInferencePipeline(model=self.model)
+            if BatchedInferencePipeline is not None
+            else self.model
+        )
+        self.uses_batched_pipeline = BatchedInferencePipeline is not None
 
     def transcribe(self, audio_path: str, batch_size: int = 8):
-        segments, info = self.pipeline.transcribe(
-            audio_path,
-            beam_size=5,
-            batch_size=batch_size,
-        )
+        if self.uses_batched_pipeline:
+            segments, info = self.pipeline.transcribe(
+                audio_path,
+                beam_size=5,
+                batch_size=batch_size,
+            )
+        else:
+            segments, info = self.pipeline.transcribe(audio_path, beam_size=5)
         text = " ".join(segment.text for segment in segments)
 
         return {
