@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from app.api import create_router
 from app.async_engine import AsyncWhisperEngine
 from app.config import get_settings
+from app.ui import create_ui_router
 
 
 settings = get_settings()
@@ -21,4 +22,5 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Faster Whisper Server", lifespan=lifespan)
+app.include_router(create_ui_router())
 app.include_router(create_router(engine))
