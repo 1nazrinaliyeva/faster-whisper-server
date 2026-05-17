@@ -1,11 +1,24 @@
 import asyncio
+import logging
 import os
 import time
 from dataclasses import dataclass
 from typing import Optional
 
+from app.config import Settings
 from app.engine import WhisperEngine
 from app.metrics import EngineMetrics
+
+
+logger = logging.getLogger(__name__)
+
+
+class QueueFullError(Exception):
+    pass
+
+
+class RequestTimeoutError(Exception):
+    pass
 
 
 @dataclass
@@ -23,22 +36,56 @@ class AsyncWhisperEngine:
         compute_type: str = "int8",
         max_batch_size: int = 8,
         max_wait_ms: int = 100,
+        queue_max_size: int = 128,
+        request_timeout_seconds: float = 300,
     ):
+        self.model_size = model_size
+        self.device = device
+        self.compute_type = compute_type
         self.max_batch_size = max_batch_size
         self.max_wait_seconds = max_wait_ms / 1000
+        self.queue_max_size = queue_max_size
+        self.request_timeout_seconds = request_timeout_seconds
         self.metrics = EngineMetrics()
         self._engine = WhisperEngine(
             model_size=model_size,
             device=device,
             compute_type=compute_type,
         )
-        self._queue: asyncio.Queue[TranscriptionRequest] = asyncio.Queue()
+        self._queue: asyncio.Queue[TranscriptionRequest] = asyncio.Queue(
+            maxsize=queue_max_size
+        )
         self._scheduler_task: Optional[asyncio.Task] = None
         self._stopping = asyncio.Event()
+
+    @classmethod
+    def from_settings(cls, settings: Settings):
+        return cls(
+            model_size=settings.whisper_model,
+            device=settings.whisper_device,
+            compute_type=settings.whisper_compute_type,
+            max_batch_size=settings.max_batch_size,
+            max_wait_ms=settings.max_wait_ms,
+            queue_max_size=settings.queue_max_size,
+            request_timeout_seconds=settings.request_timeout_seconds,
+        )
 
     @property
     def queue_size(self) -> int:
         return self._queue.qsize()
+
+    def info(self) -> dict:
+        return {
+            "model": self.model_size,
+            "device": self.device,
+            "compute_type": self.compute_type,
+            "max_batch_size": self.max_batch_size,
+            "max_wait_ms": int(self.max_wait_seconds * 1000),
+            "queue_max_size": self.queue_max_size,
+            "request_timeout_seconds": self.request_timeout_seconds,
+            "queue_size": self.queue_size,
+            "batched_pipeline": self._engine.uses_batched_pipeline,
+        }
 
     async def start(self) -> None:
         if self._scheduler_task is None or self._scheduler_task.done():
@@ -64,13 +111,27 @@ class AsyncWhisperEngine:
             submitted_at=loop.time(),
         )
 
+        if self._queue.full():
+            self.metrics.record_rejection()
+            _safe_remove(audio_path)
+            raise QueueFullError("transcription queue is full")
+
         self.metrics.record_request()
-        await self._queue.put(request)
-        return await future
+        self._queue.put_nowait(request)
+
+        try:
+            return await asyncio.wait_for(
+                future,
+                timeout=self.request_timeout_seconds,
+            )
+        except asyncio.TimeoutError as exc:
+            future.cancel()
+            self.metrics.record_timeout()
+            raise RequestTimeoutError("transcription request timed out") from exc
 
     async def _scheduler_loop(self) -> None:
         while not self._stopping.is_set():
-            request = await self._queue.get()
+            request = await self._get_next_active_request()
             batch = [request]
             deadline = asyncio.get_running_loop().time() + self.max_wait_seconds
 
@@ -80,15 +141,49 @@ class AsyncWhisperEngine:
                     break
 
                 try:
-                    batch.append(await asyncio.wait_for(self._queue.get(), timeout))
+                    next_request = await asyncio.wait_for(
+                        self._get_next_active_request(),
+                        timeout,
+                    )
+                    batch.append(next_request)
                 except asyncio.TimeoutError:
                     break
 
+            batch = self._drop_cancelled_requests(batch)
+            if not batch:
+                continue
+
             await self._run_batch(batch)
+
+    async def _get_next_active_request(self) -> TranscriptionRequest:
+        while True:
+            request = await self._queue.get()
+            if not request.future.cancelled():
+                return request
+
+            self._queue.task_done()
+            _safe_remove(request.audio_path)
+
+    def _drop_cancelled_requests(
+        self,
+        batch: list[TranscriptionRequest],
+    ) -> list[TranscriptionRequest]:
+        active_requests = []
+        for request in batch:
+            if request.future.cancelled():
+                self._queue.task_done()
+                _safe_remove(request.audio_path)
+            else:
+                active_requests.append(request)
+        return active_requests
 
     async def _run_batch(self, batch: list[TranscriptionRequest]) -> None:
         start = time.perf_counter()
         loop = asyncio.get_running_loop()
+        now = loop.time()
+
+        for request in batch:
+            self.metrics.record_queue_wait(now - request.submitted_at)
 
         try:
             results = await loop.run_in_executor(
@@ -99,18 +194,36 @@ class AsyncWhisperEngine:
             )
             inference_time = time.perf_counter() - start
             self.metrics.record_batch(len(batch), inference_time)
+            logger.info(
+                "processed transcription batch",
+                extra={
+                    "batch_size": len(batch),
+                    "inference_time_seconds": inference_time,
+                },
+            )
 
             for request, result in zip(batch, results):
                 if not request.future.done():
                     if isinstance(result, Exception):
                         self.metrics.record_error()
+                        logger.error("transcription request failed", exc_info=result)
+                        self.metrics.record_request_latency(
+                            loop.time() - request.submitted_at
+                        )
                         request.future.set_exception(result)
                     else:
+                        self.metrics.record_request_latency(
+                            loop.time() - request.submitted_at
+                        )
                         request.future.set_result(result)
         except Exception as exc:
             self.metrics.record_error(len(batch))
+            logger.exception("transcription batch failed")
             for request in batch:
                 if not request.future.done():
+                    self.metrics.record_request_latency(
+                        loop.time() - request.submitted_at
+                    )
                     request.future.set_exception(exc)
         finally:
             for request in batch:
