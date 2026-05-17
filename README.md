@@ -16,7 +16,8 @@ Production-style FastAPI inference server around `faster-whisper`.
 
 ## Files
 
-- `app/main.py` owns HTTP concerns: FastAPI lifecycle, `/transcribe`, `/health`, and `/metrics`.
+- `app/main.py` owns FastAPI application setup and lifecycle.
+- `app/api.py` owns HTTP endpoints: `/transcribe`, `/health`, `/metrics`, and OpenAI-style routes.
 - `app/async_engine.py` owns vLLM-style scheduling concerns: queue submission, scheduler loop, dynamic batches, and response futures.
 - `app/config.py` owns environment-based server configuration.
 - `app/engine.py` owns model concerns: loading `WhisperModel`, wrapping it with `BatchedInferencePipeline`, and running transcription.
