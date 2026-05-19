@@ -57,16 +57,20 @@ def create_router(engine: AsyncWhisperEngine, max_upload_size_mb: int) -> APIRou
         )
 
     @router.post("/transcribe")
-    async def transcribe(file: UploadFile = File(...)):
-        return await _transcribe_upload(engine, file, max_upload_size_mb)
+    async def transcribe(
+        file: UploadFile = File(...),
+        language: str | None = Form(default=None),
+    ):
+        return await _transcribe_upload(engine, file, max_upload_size_mb, language)
 
     @router.post("/v1/audio/transcriptions")
     async def create_transcription(
         file: UploadFile = File(...),
         model: str | None = Form(default=None),
+        language: str | None = Form(default=None),
     ):
         _ = model
-        return await _transcribe_upload(engine, file, max_upload_size_mb)
+        return await _transcribe_upload(engine, file, max_upload_size_mb, language)
 
     return router
 
@@ -75,6 +79,7 @@ async def _transcribe_upload(
     engine: AsyncWhisperEngine,
     file: UploadFile,
     max_upload_size_mb: int,
+    language: str | None,
 ) -> dict:
     temp_path = None
     submitted_to_engine = False
@@ -82,7 +87,11 @@ async def _transcribe_upload(
     try:
         temp_path = await _save_upload_to_temp_file(file, max_upload_size_mb)
         submitted_to_engine = True
-        return await engine.transcribe(temp_path)
+        return await engine.transcribe(
+            temp_path,
+            language=_normalize_language(language),
+            use_language_override=language is not None,
+        )
     except UploadTooLargeError as exc:
         raise HTTPException(status_code=413, detail=str(exc)) from exc
     except QueueFullError as exc:
@@ -133,3 +142,12 @@ def _safe_remove(path: str) -> None:
         os.remove(path)
     except FileNotFoundError:
         pass
+
+
+def _normalize_language(language: str | None) -> str | None:
+    if language is None:
+        return None
+    language = language.strip()
+    if language == "" or language.lower() in {"auto", "model", "model_decides"}:
+        return None
+    return language

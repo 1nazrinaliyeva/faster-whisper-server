@@ -54,6 +54,12 @@ observability
 | `WHISPER_MODEL` | `small` | faster-whisper model name or local CTranslate2 model directory. |
 | `WHISPER_DEVICE` | `cpu` | CTranslate2 device, for example `cpu` or `cuda`. |
 | `WHISPER_COMPUTE_TYPE` | `int8` | CTranslate2 compute type, for example `int8`, `float16`, or `int8_float16`. |
+| `WHISPER_FORCE_LANGUAGE` | empty | Optional advanced override, for example `az`, `en`, or `tr`. Leave empty so Whisper chooses the audio language itself. |
+| `WHISPER_TASK` | `transcribe` | Whisper task, usually `transcribe` or `translate`. |
+| `WHISPER_BEAM_SIZE` | `5` | Beam size used by faster-whisper. Higher can improve quality, lower is faster. |
+| `WHISPER_BATCH_SIZE` | `8` | Internal faster-whisper batched pipeline size. |
+| `WHISPER_VAD_FILTER` | `true` | Enable or disable faster-whisper VAD filtering. |
+| `WHISPER_INITIAL_PROMPT` | empty | Optional prompt for domain/language hints. |
 | `MAX_BATCH_SIZE` | `8` | Maximum scheduler batch size. |
 | `MAX_WAIT_MS` | `100` | Maximum scheduler wait after the first queued request. |
 | `QUEUE_MAX_SIZE` | `128` | Maximum queued requests before returning HTTP `429`. |
@@ -101,6 +107,18 @@ WHISPER_COMPUTE_TYPE=float16 \
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
+`/path/to/ct2-model` in examples is only a placeholder. Replace it with a real directory on your machine. If the directory does not exist, `faster-whisper` may try to interpret the value as a Hugging Face repo id.
+
+The CT2 model directory should contain files such as:
+
+```text
+config.json
+model.bin
+tokenizer.json
+preprocessor_config.json
+vocabulary.json
+```
+
 CPU example:
 
 ```bash
@@ -109,6 +127,44 @@ WHISPER_DEVICE=cpu \
 WHISPER_COMPUTE_TYPE=int8 \
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
+
+## Fine-Tuned Whisper Models
+
+The server is designed to run any Whisper-compatible model that `faster-whisper` can load. In practice, production deployments should use CTranslate2 format.
+
+If you have a fine-tuned Hugging Face Whisper model, convert it first:
+
+```bash
+ct2-transformers-converter \
+  --model your-org/your-whisper-finetuned-model \
+  --output_dir models/your-whisper-finetuned-ct2 \
+  --copy_files tokenizer.json preprocessor_config.json \
+  --quantization int8
+```
+
+Then run the server with that local path:
+
+```bash
+WHISPER_MODEL=models/your-whisper-finetuned-ct2 \
+WHISPER_TASK=transcribe \
+WHISPER_BEAM_SIZE=5 \
+WHISPER_BATCH_SIZE=8 \
+WHISPER_VAD_FILTER=true \
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+Do not set `WHISPER_FORCE_LANGUAGE` if you want Whisper to choose the language for each audio file. Set it only when all uploaded audio is known to be the same language.
+
+For GPU:
+
+```bash
+WHISPER_MODEL=models/your-whisper-finetuned-ct2 \
+WHISPER_DEVICE=cuda \
+WHISPER_COMPUTE_TYPE=float16 \
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+For language-specific fine-tuned models, set `WHISPER_FORCE_LANGUAGE` only when every input is expected to be that language. Leave it empty when Whisper should choose the language itself.
 
 ## API
 
@@ -143,6 +199,63 @@ Additional operational metrics include rejected requests, timeouts, active reque
 
 ## Run
 
+Recommended CLI entrypoint:
+
+```bash
+python -m app.cli --model large-v3-turbo --host 0.0.0.0 --port 8000
+```
+
+List built-in faster-whisper model names:
+
+```bash
+python -m app.cli --list-models
+```
+
+Use any listed model with `--model`:
+
+```bash
+python -m app.cli --model small
+python -m app.cli --model medium
+python -m app.cli --model large-v3
+python -m app.cli --model large-v3-turbo
+```
+
+Faster local testing:
+
+```bash
+python -m app.cli \
+  --model small \
+  --beam-size 1 \
+  --max-batch-size 2 \
+  --request-timeout-seconds 900 \
+  --reload
+```
+
+Run with a local CT2 model path:
+
+```bash
+python -m app.cli \
+  --model models/whisper-large-v3-turbo-ct2 \
+  --device cpu \
+  --compute-type int8 \
+  --host 0.0.0.0 \
+  --port 8000
+```
+
+Advanced language override is optional. By default, Whisper chooses the audio language itself:
+
+```bash
+python -m app.cli --model large-v3-turbo
+```
+
+Force one language only when every input is known to be that language:
+
+```bash
+python -m app.cli --model large-v3-turbo --force-language az
+```
+
+The environment-variable style still works:
+
 ```bash
 uvicorn app.main:app --reload
 ```
@@ -157,7 +270,17 @@ http://127.0.0.1:8000/
 
 ```bash
 docker build -t faster-whisper-server .
-docker run --rm -p 8000:8000 faster-whisper-server
+docker run --rm faster-whisper-server --list-models
+docker run --rm -p 8000:8000 faster-whisper-server --model large-v3-turbo --port 8000
+```
+
+The Docker image uses the same CLI flags as the local command. Pick any model from
+`--list-models` and pass it with `--model`:
+
+```bash
+docker run --rm -p 8000:8000 faster-whisper-server --model small --port 8000
+docker run --rm -p 8000:8000 faster-whisper-server --model medium --port 8000
+docker run --rm -p 8000:8000 faster-whisper-server --model large-v3 --port 8000
 ```
 
 Run Docker with a local CTranslate2 model:
@@ -165,10 +288,11 @@ Run Docker with a local CTranslate2 model:
 ```bash
 docker run --rm -p 8000:8000 \
   -v "$PWD/models/whisper-large-v3-turbo-ct2:/models/whisper" \
-  -e WHISPER_MODEL=/models/whisper \
-  -e WHISPER_DEVICE=cpu \
-  -e WHISPER_COMPUTE_TYPE=int8 \
-  faster-whisper-server
+  faster-whisper-server \
+  --model /models/whisper \
+  --device cpu \
+  --compute-type int8 \
+  --port 8000
 ```
 
 ## Benchmark

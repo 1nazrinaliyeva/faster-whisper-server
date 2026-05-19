@@ -208,22 +208,16 @@ DASHBOARD_HTML = """
     }
 
     .tile {
-      appearance: none;
-      width: 100%;
       min-height: 96px;
       padding: 16px;
       border: 1px solid var(--border);
       border-radius: 8px;
       background: var(--surface);
       box-shadow: var(--shadow);
-      color: var(--text);
-      text-align: left;
-      cursor: pointer;
     }
 
     .tile:hover {
-      border-color: var(--border-strong);
-      transform: translateY(-1px);
+      border-color: var(--border);
     }
 
     .tile span {
@@ -241,6 +235,14 @@ DASHBOARD_HTML = """
       font-size: 26px;
       line-height: 1;
       letter-spacing: 0;
+    }
+
+    .metric-note {
+      display: block;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
     }
 
     .workspace {
@@ -358,9 +360,8 @@ DASHBOARD_HTML = """
 
     .file-card {
       display: none;
-      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-columns: minmax(0, 1fr);
       gap: 12px;
-      align-items: center;
       margin-top: 14px;
       padding: 14px;
       border: 1px solid #b7dfcf;
@@ -370,6 +371,23 @@ DASHBOARD_HTML = """
 
     .file-card.visible {
       display: grid;
+    }
+
+    .file-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .file-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
     }
 
     .file-card strong {
@@ -385,6 +403,21 @@ DASHBOARD_HTML = """
       color: var(--muted);
       font-size: 12px;
       font-weight: 700;
+    }
+
+    .file-result {
+      grid-column: 1 / -1;
+      display: none;
+      padding: 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fbfcfe;
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+
+    .file-result.visible {
+      display: block;
     }
 
     .progress {
@@ -421,17 +454,6 @@ DASHBOARD_HTML = """
     button:disabled {
       cursor: not-allowed;
       opacity: 0.6;
-    }
-
-    .tile {
-      background: var(--surface);
-      color: var(--text);
-      border-color: var(--border);
-    }
-
-    .tile:hover {
-      background: var(--surface);
-      border-color: var(--border-strong);
     }
 
     .secondary {
@@ -588,8 +610,8 @@ DASHBOARD_HTML = """
       <div class="nav-section">
         <p class="nav-label">Workspace</p>
         <button class="nav-item active" data-target="transcriptionPanel" type="button"><span class="nav-icon"></span>Transcription</button>
-        <button class="nav-item" data-target="schedulerPanel" type="button"><span class="nav-icon"></span>Scheduler</button>
-        <button class="nav-item" data-target="monitoringPanel" type="button"><span class="nav-icon"></span>Monitoring</button>
+        <button class="nav-item" data-target="modelPanel" type="button"><span class="nav-icon"></span>Model</button>
+        <button class="nav-item" data-target="schedulerPanel" type="button"><span class="nav-icon"></span>Runtime</button>
       </div>
     </aside>
 
@@ -600,18 +622,18 @@ DASHBOARD_HTML = """
           <p id="subtitle">Model and scheduler status are loading</p>
         </div>
         <div class="top-actions">
-          <button class="secondary" id="openDocs" type="button">API Docs</button>
-          <button class="secondary" id="openMetrics" type="button">Metrics</button>
-          <div class="status-pill"><span class="status-dot"></span><span id="status">Starting</span></div>
+          <button class="secondary" id="openDocs" type="button" title="Open FastAPI Swagger documentation">API Docs</button>
+          <button class="secondary" id="openMetrics" type="button" title="Open raw Prometheus metrics">Metrics</button>
+          <div class="status-pill" title="Server health status"><span class="status-dot"></span><span id="status">Starting</span></div>
         </div>
       </header>
 
       <main class="content">
         <section class="summary" id="monitoringPanel">
-          <button class="tile" data-target="schedulerPanel" type="button"><span>Queue</span><strong id="queue">-</strong></button>
-          <button class="tile" data-target="monitoringPanel" type="button"><span>Requests</span><strong id="requests">-</strong></button>
-          <button class="tile" data-target="monitoringPanel" type="button"><span>Errors</span><strong id="errors">-</strong></button>
-          <button class="tile" data-target="monitoringPanel" type="button"><span>Rejected</span><strong id="rejected">-</strong></button>
+          <div class="tile"><span>Queue</span><strong id="queue">-</strong><small class="metric-note">Waiting requests right now</small></div>
+          <div class="tile"><span>Requests</span><strong id="requests">-</strong><small class="metric-note">Accepted requests total</small></div>
+          <div class="tile"><span>Errors</span><strong id="errors">-</strong><small class="metric-note">Failed requests total</small></div>
+          <div class="tile"><span>Rejected</span><strong id="rejected">-</strong><small class="metric-note">Queue-full rejections total</small></div>
         </section>
 
         <section class="workspace">
@@ -625,24 +647,27 @@ DASHBOARD_HTML = """
             <div class="panel-body">
               <form id="form">
                 <label class="upload-zone" id="dropzone">
-                  <input id="file" type="file" name="file" accept="audio/*,video/*">
+                  <input id="file" type="file" name="file" accept="audio/*,video/*" multiple>
                   <div>
                     <div class="upload-mark">+</div>
-                    <p class="upload-title" id="uploadTitle">Choose an audio file</p>
-                    <p class="upload-meta" id="uploadMeta">WAV, MP3, MP4, M4A, WEBM and other ffmpeg-supported files</p>
+                    <p class="upload-title" id="uploadTitle">Choose audio files</p>
+                    <p class="upload-meta" id="uploadMeta">Select or drag multiple WAV, MP3, MP4, M4A, WEBM files</p>
                   </div>
                 </label>
                 <div class="file-card" id="selectedFile">
                   <div>
-                    <strong id="selectedFileName">No file selected</strong>
-                    <span id="selectedFileMeta">Waiting for an audio file</span>
+                    <strong id="selectedFileName">No files selected</strong>
+                    <span id="selectedFileMeta">Waiting for audio files</span>
                   </div>
-                  <button class="ghost" id="clearFile" type="button">Remove</button>
                   <div class="progress"><div id="uploadProgress"></div></div>
+                  <div class="file-list" id="fileList"></div>
                 </div>
                 <div class="actions">
-                  <div class="file-name" id="fileName">No file selected</div>
-                  <button id="submit" type="submit" disabled>Transcribe</button>
+                  <div class="file-name" id="fileName">No files selected</div>
+                  <div class="panel-actions">
+                    <button class="ghost" id="clearFile" type="button">Remove all</button>
+                    <button id="submit" type="submit" disabled>Transcribe all</button>
+                  </div>
                 </div>
               </form>
 
@@ -653,7 +678,7 @@ DASHBOARD_HTML = """
                   <button class="ghost" id="clearResult" type="button">Clear</button>
                 </div>
               </div>
-              <div id="result" class="result empty">Transcription output will appear here.</div>
+              <div id="result" class="result empty">Batch transcription output will appear here.</div>
 
               <div class="details">
                 <div class="detail"><span>Language</span><strong id="language">-</strong></div>
@@ -672,9 +697,12 @@ DASHBOARD_HTML = """
               <div class="panel-body">
                 <dl>
                   <dt>Model</dt><dd id="model">-</dd>
+                  <dt>Source</dt><dd id="modelSource">-</dd>
                   <dt>Device</dt><dd id="device">-</dd>
                   <dt>Compute</dt><dd id="compute">-</dd>
                   <dt>Pipeline</dt><dd id="pipeline">-</dd>
+                  <dt>Language</dt><dd id="modelLanguage">-</dd>
+                  <dt>Task</dt><dd id="modelTask">-</dd>
                 </dl>
               </div>
             </div>
@@ -705,7 +733,7 @@ DASHBOARD_HTML = """
     const dropzone = $("dropzone");
     const submit = $("submit");
     const result = $("result");
-    let selectedFile = null;
+    let selectedFiles = [];
     let latestTranscription = "";
 
     function parseMetrics(text) {
@@ -721,7 +749,7 @@ DASHBOARD_HTML = """
     function setResult(text, isError = false) {
       latestTranscription = isError ? "" : text;
       result.classList.toggle("empty", !text);
-      result.textContent = text || "Transcription output will appear here.";
+      result.textContent = text || "Batch transcription output will appear here.";
       result.classList.toggle("error", isError);
     }
 
@@ -742,40 +770,99 @@ DASHBOARD_HTML = """
       }
     }
 
-    function selectFile(file) {
-      selectedFile = file || null;
-      submit.disabled = !selectedFile;
-      dropzone.classList.toggle("has-file", Boolean(selectedFile));
-      $("selectedFile").classList.toggle("visible", Boolean(selectedFile));
-      $("fileName").textContent = selectedFile
-        ? selectedFile.name
-        : "No file selected";
-      $("selectedFileName").textContent = selectedFile
-        ? selectedFile.name
-        : "No file selected";
-      $("selectedFileMeta").textContent = selectedFile
-        ? `${formatBytes(selectedFile.size)} selected and ready to upload`
-        : "Waiting for an audio file";
-      $("uploadTitle").textContent = selectedFile
-        ? "Audio file selected"
-        : "Choose an audio file";
-      $("uploadMeta").textContent = selectedFile
-        ? "Ready to transcribe. You can replace it by choosing another file."
-        : "WAV, MP3, MP4, M4A, WEBM and other ffmpeg-supported files";
-      setUploadProgress(selectedFile ? 100 : 0);
+    function selectFiles(files, append = false) {
+      const incomingFiles = Array.from(files || []);
+      selectedFiles = append
+        ? mergeFiles(selectedFiles, incomingFiles)
+        : incomingFiles;
+      renderFileList();
+      submit.disabled = selectedFiles.length === 0;
+      dropzone.classList.toggle("has-file", selectedFiles.length > 0);
+      $("selectedFile").classList.toggle("visible", selectedFiles.length > 0);
+      $("fileName").textContent = selectedFiles.length
+        ? `${selectedFiles.length} file${selectedFiles.length === 1 ? "" : "s"} selected`
+        : "No files selected";
+      $("selectedFileName").textContent = selectedFiles.length
+        ? `${selectedFiles.length} audio file${selectedFiles.length === 1 ? "" : "s"} ready`
+        : "No files selected";
+      $("selectedFileMeta").textContent = selectedFiles.length
+        ? `${formatBytes(totalSelectedBytes())} total selected`
+        : "Waiting for audio files";
+      $("uploadTitle").textContent = selectedFiles.length
+        ? "Audio files selected"
+        : "Choose audio files";
+      $("uploadMeta").textContent = selectedFiles.length
+        ? "Ready to transcribe. Choose more files to add them to this batch."
+        : "Select or drag multiple WAV, MP3, MP4, M4A, WEBM files";
+      setUploadProgress(selectedFiles.length ? 100 : 0);
     }
 
-    function transcribeWithProgress(form) {
+    function mergeFiles(existingFiles, incomingFiles) {
+      const seen = new Set(
+        existingFiles.map((file) => `${file.name}:${file.size}:${file.lastModified}`)
+      );
+      const merged = [...existingFiles];
+      for (const file of incomingFiles) {
+        const key = `${file.name}:${file.size}:${file.lastModified}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          merged.push(file);
+        }
+      }
+      return merged;
+    }
+
+    function totalSelectedBytes() {
+      return selectedFiles.reduce((total, file) => total + file.size, 0);
+    }
+
+    function renderFileList() {
+      $("fileList").innerHTML = selectedFiles
+        .map((file, index) => `
+          <div class="file-row" id="fileRow-${index}">
+            <div>
+              <strong>${escapeHtml(file.name)}</strong>
+              <span id="fileStatus-${index}">${formatBytes(file.size)} ready</span>
+            </div>
+            <button class="ghost" data-remove-index="${index}" type="button">Remove</button>
+            <div class="progress"><div id="fileProgress-${index}"></div></div>
+            <div class="file-result" id="fileResult-${index}"></div>
+          </div>
+        `)
+        .join("");
+
+      document.querySelectorAll("[data-remove-index]").forEach((button) => {
+        button.addEventListener("click", () => {
+          selectedFiles.splice(Number(button.dataset.removeIndex), 1);
+          renderFileList();
+          selectFiles(selectedFiles);
+        });
+      });
+    }
+
+    function escapeHtml(value) {
+      return value.replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;",
+      }[char]));
+    }
+
+    function transcribeWithProgress(file, index) {
       return new Promise((resolve, reject) => {
+        const form = new FormData();
+        form.append("file", file);
         const request = new XMLHttpRequest();
         request.open("POST", "/transcribe");
         request.upload.onprogress = (event) => {
           if (!event.lengthComputable) {
-            setUploadProgress(15, "Uploading");
+            setFileProgress(index, 15, "Uploading");
             return;
           }
           const percent = Math.round((event.loaded / event.total) * 100);
-          setUploadProgress(percent, `Uploading ${percent}%`);
+          setFileProgress(index, percent, `Uploading ${percent}%`);
         };
         request.onload = () => {
           let payload = {};
@@ -797,6 +884,25 @@ DASHBOARD_HTML = """
       });
     }
 
+    function setFileProgress(index, percent, label) {
+      const progress = $(`fileProgress-${index}`);
+      const status = $(`fileStatus-${index}`);
+      if (progress) {
+        progress.style.width = `${Math.max(0, Math.min(percent, 100))}%`;
+      }
+      if (status && label) {
+        status.textContent = label;
+      }
+    }
+
+    function setFileResult(index, text, isError = false) {
+      const target = $(`fileResult-${index}`);
+      if (!target) return;
+      target.classList.add("visible");
+      target.classList.toggle("error", isError);
+      target.textContent = text;
+    }
+
     function scrollToPanel(id) {
       const target = $(id);
       if (!target) return;
@@ -811,7 +917,7 @@ DASHBOARD_HTML = """
       ]);
       const metrics = parseMetrics(metricsText);
 
-      $("status").textContent = health.status;
+      $("status").textContent = health.status === "ok" ? "Server OK" : health.status;
       $("subtitle").textContent = `${model.model} on ${model.device}`;
       $("queue").textContent = health.queue_size;
       $("requests").textContent = metrics.requests_total ?? 0;
@@ -819,16 +925,22 @@ DASHBOARD_HTML = """
       $("rejected").textContent = metrics.rejected_requests_total ?? 0;
       $("timeouts").textContent = metrics.timeouts_total ?? 0;
       $("model").textContent = model.model;
+      $("modelSource").textContent = model.model_is_local ? "Local CT2 path" : "Model name / HF id";
       $("device").textContent = model.device;
       $("compute").textContent = model.compute_type;
       $("pipeline").textContent = model.batched_pipeline ? "Batched" : "Standard";
+      $("modelLanguage").textContent = model.language || "auto";
+      $("modelTask").textContent = model.task || "transcribe";
       $("batch").textContent = model.max_batch_size;
       $("wait").textContent = `${model.max_wait_ms} ms`;
       $("queueLimit").textContent = model.queue_max_size;
       $("timeout").textContent = `${model.request_timeout_seconds} s`;
     }
 
-    fileInput.addEventListener("change", () => selectFile(fileInput.files[0]));
+    fileInput.addEventListener("change", () => {
+      selectFiles(fileInput.files, true);
+      fileInput.value = "";
+    });
 
     ["dragenter", "dragover"].forEach((eventName) => {
       dropzone.addEventListener(eventName, (event) => {
@@ -844,10 +956,10 @@ DASHBOARD_HTML = """
     dropzone.addEventListener("drop", (event) => {
       event.preventDefault();
       dropzone.classList.remove("active");
-      selectFile(event.dataTransfer.files[0]);
+      selectFiles(event.dataTransfer.files, true);
     });
 
-    document.querySelectorAll("[data-target]").forEach((item) => {
+    document.querySelectorAll(".nav-item[data-target]").forEach((item) => {
       item.addEventListener("click", () => {
         document.querySelectorAll(".nav-item").forEach((navItem) => {
           navItem.classList.toggle("active", navItem === item);
@@ -863,7 +975,7 @@ DASHBOARD_HTML = """
     $("refresh").addEventListener("click", refresh);
     $("clearFile").addEventListener("click", () => {
       fileInput.value = "";
-      selectFile(null);
+      selectFiles([]);
     });
     $("copyResult").addEventListener("click", async () => {
       if (!latestTranscription) return;
@@ -876,30 +988,58 @@ DASHBOARD_HTML = """
       $("language").textContent = "-";
       $("duration").textContent = "-";
       setResult("");
+      document.querySelectorAll(".file-result").forEach((item) => {
+        item.classList.remove("visible", "error");
+        item.textContent = "";
+      });
     });
 
     $("form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const file = selectedFile;
-      if (!file) return;
+      if (!selectedFiles.length) return;
 
-      const form = new FormData();
-      form.append("file", file);
       submit.disabled = true;
       submit.textContent = "Running";
-      setUploadProgress(0, `${formatBytes(file.size)} selected. Upload starting`);
+      setUploadProgress(0, `${selectedFiles.length} files queued`);
       setResult("");
       $("language").textContent = "-";
       $("duration").textContent = "-";
 
       try {
-        const payload = await transcribeWithProgress(form);
-        setUploadProgress(100, "Uploaded. Transcription completed");
+        const startedAt = performance.now();
+        const results = await Promise.allSettled(
+          selectedFiles.map((file, index) => transcribeWithProgress(file, index))
+        );
+        const elapsedSeconds = (performance.now() - startedAt) / 1000;
+        const successfulResults = [];
+        let failedCount = 0;
+
+        results.forEach((resultItem, index) => {
+          if (resultItem.status === "fulfilled") {
+            const payload = resultItem.value;
+            successfulResults.push(payload);
+            setFileProgress(index, 100, "Completed");
+            setFileResult(index, payload.text || "");
+          } else {
+            failedCount += 1;
+            setFileProgress(index, 100, "Failed");
+            setFileResult(index, resultItem.reason.message, true);
+          }
+        });
+
+        setUploadProgress(
+          100,
+          `${successfulResults.length} completed, ${failedCount} failed`
+        );
         result.classList.remove("empty");
-        setResult(payload.text || "");
-        $("language").textContent = payload.language || "-";
-        $("duration").textContent = payload.duration
-          ? `${payload.duration.toFixed(2)} s`
+        setResult(
+          successfulResults
+            .map((payload, index) => `#${index + 1}\\n${payload.text || ""}`)
+            .join("\\n\\n")
+        );
+        $("language").textContent = summarizeLanguages(successfulResults);
+        $("duration").textContent = successfulResults.length
+          ? `${elapsedSeconds.toFixed(2)} s`
           : "-";
       } catch (error) {
         setUploadProgress(100, "Upload or transcription failed");
@@ -911,7 +1051,12 @@ DASHBOARD_HTML = """
       }
     });
 
-    selectFile(null);
+    function summarizeLanguages(results) {
+      const languages = [...new Set(results.map((item) => item.language).filter(Boolean))];
+      return languages.length ? languages.join(", ") : "-";
+    }
+
+    selectFiles([]);
     refresh();
   </script>
 </body>

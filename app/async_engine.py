@@ -30,6 +30,8 @@ class TranscriptionRequest:
     audio_path: str
     future: asyncio.Future
     submitted_at: float
+    language: str | None = None
+    use_language_override: bool = False
 
 
 class AsyncWhisperEngine:
@@ -38,6 +40,12 @@ class AsyncWhisperEngine:
         model_size: str = "small",
         device: str = "cpu",
         compute_type: str = "int8",
+        language: str | None = None,
+        task: str = "transcribe",
+        beam_size: int = 5,
+        whisper_batch_size: int = 8,
+        vad_filter: bool = True,
+        initial_prompt: str | None = None,
         max_batch_size: int = 8,
         max_wait_ms: int = 100,
         queue_max_size: int = 128,
@@ -47,6 +55,12 @@ class AsyncWhisperEngine:
         self.model_size = model_size
         self.device = device
         self.compute_type = compute_type
+        self.language = language
+        self.task = task
+        self.beam_size = beam_size
+        self.whisper_batch_size = whisper_batch_size
+        self.vad_filter = vad_filter
+        self.initial_prompt = initial_prompt
         self.max_batch_size = max_batch_size
         self.max_wait_seconds = max_wait_ms / 1000
         self.queue_max_size = queue_max_size
@@ -57,6 +71,12 @@ class AsyncWhisperEngine:
             model_size=model_size,
             device=device,
             compute_type=compute_type,
+            language=language,
+            task=task,
+            beam_size=beam_size,
+            batch_size=whisper_batch_size,
+            vad_filter=vad_filter,
+            initial_prompt=initial_prompt,
         )
         self._queue: asyncio.Queue[Optional[TranscriptionRequest]] = asyncio.Queue(
             maxsize=queue_max_size
@@ -72,6 +92,12 @@ class AsyncWhisperEngine:
             model_size=settings.whisper_model,
             device=settings.whisper_device,
             compute_type=settings.whisper_compute_type,
+            language=settings.whisper_language,
+            task=settings.whisper_task,
+            beam_size=settings.whisper_beam_size,
+            whisper_batch_size=settings.whisper_batch_size,
+            vad_filter=settings.whisper_vad_filter,
+            initial_prompt=settings.whisper_initial_prompt,
             max_batch_size=settings.max_batch_size,
             max_wait_ms=settings.max_wait_ms,
             queue_max_size=settings.queue_max_size,
@@ -88,6 +114,12 @@ class AsyncWhisperEngine:
             "model": self.model_size,
             "device": self.device,
             "compute_type": self.compute_type,
+            "language": self.language,
+            "task": self.task,
+            "beam_size": self.beam_size,
+            "whisper_batch_size": self.whisper_batch_size,
+            "vad_filter": self.vad_filter,
+            "initial_prompt_configured": self.initial_prompt is not None,
             "max_batch_size": self.max_batch_size,
             "max_wait_ms": int(self.max_wait_seconds * 1000),
             "queue_max_size": self.queue_max_size,
@@ -129,7 +161,12 @@ class AsyncWhisperEngine:
                 except asyncio.CancelledError:
                     pass
 
-    async def transcribe(self, audio_path: str) -> dict:
+    async def transcribe(
+        self,
+        audio_path: str,
+        language: str | None = None,
+        use_language_override: bool = False,
+    ) -> dict:
         if self._shutdown_started:
             _safe_remove(audio_path)
             raise ServerShuttingDownError("server is shutting down")
@@ -148,6 +185,8 @@ class AsyncWhisperEngine:
             audio_path=audio_path,
             future=future,
             submitted_at=loop.time(),
+            language=language,
+            use_language_override=use_language_override,
         )
 
         if self._queue.full():
@@ -247,7 +286,9 @@ class AsyncWhisperEngine:
                 None,
                 self._engine.transcribe_batch,
                 [request.audio_path for request in batch],
-                len(batch),
+                self.whisper_batch_size,
+                [request.language for request in batch],
+                [request.use_language_override for request in batch],
             )
             inference_time = time.perf_counter() - start
             self.metrics.record_batch(len(batch), inference_time)
