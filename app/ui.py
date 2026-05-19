@@ -114,12 +114,20 @@ DASHBOARD_HTML = """
       display: flex;
       align-items: center;
       gap: 10px;
+      width: 100%;
       min-height: 38px;
       padding: 0 10px;
+      border: 0;
       border-radius: 6px;
+      background: transparent;
       color: #dce4ec;
+      font: inherit;
+      font-weight: 700;
+      text-align: left;
+      cursor: pointer;
     }
 
+    .nav-item:hover,
     .nav-item.active {
       background: rgba(255, 255, 255, 0.1);
       color: #ffffff;
@@ -173,6 +181,14 @@ DASHBOARD_HTML = """
       white-space: nowrap;
     }
 
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
     .status-dot {
       width: 8px;
       height: 8px;
@@ -192,12 +208,22 @@ DASHBOARD_HTML = """
     }
 
     .tile {
+      appearance: none;
+      width: 100%;
       min-height: 96px;
       padding: 16px;
       border: 1px solid var(--border);
       border-radius: 8px;
       background: var(--surface);
       box-shadow: var(--shadow);
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .tile:hover {
+      border-color: var(--border-strong);
+      transform: translateY(-1px);
     }
 
     .tile span {
@@ -249,6 +275,14 @@ DASHBOARD_HTML = """
       letter-spacing: 0;
     }
 
+    .panel-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
     .panel-body {
       padding: 18px;
     }
@@ -267,6 +301,7 @@ DASHBOARD_HTML = """
     }
 
     .upload-zone.active,
+    .upload-zone.has-file,
     .upload-zone:hover {
       border-color: var(--accent);
       background: #f1fbf7;
@@ -321,6 +356,53 @@ DASHBOARD_HTML = """
       white-space: nowrap;
     }
 
+    .file-card {
+      display: none;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: center;
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px solid #b7dfcf;
+      border-radius: 8px;
+      background: var(--accent-soft);
+    }
+
+    .file-card.visible {
+      display: grid;
+    }
+
+    .file-card strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .file-card span {
+      display: block;
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .progress {
+      grid-column: 1 / -1;
+      height: 8px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #d7eadf;
+    }
+
+    .progress div {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width 0.2s ease;
+    }
+
     button {
       min-height: 40px;
       padding: 0 15px;
@@ -341,13 +423,36 @@ DASHBOARD_HTML = """
       opacity: 0.6;
     }
 
+    .tile {
+      background: var(--surface);
+      color: var(--text);
+      border-color: var(--border);
+    }
+
+    .tile:hover {
+      background: var(--surface);
+      border-color: var(--border-strong);
+    }
+
     .secondary {
       background: var(--surface);
       color: var(--text);
       border-color: var(--border-strong);
     }
 
+    .ghost {
+      min-height: 34px;
+      padding: 0 12px;
+      background: transparent;
+      color: var(--text);
+      border-color: var(--border);
+    }
+
     .secondary:hover {
+      background: var(--surface-soft);
+    }
+
+    .ghost:hover {
       background: var(--surface-soft);
     }
 
@@ -459,6 +564,10 @@ DASHBOARD_HTML = """
         flex-direction: column;
       }
 
+      .file-card {
+        grid-template-columns: 1fr;
+      }
+
       .file-name {
         white-space: normal;
       }
@@ -478,9 +587,9 @@ DASHBOARD_HTML = """
 
       <div class="nav-section">
         <p class="nav-label">Workspace</p>
-        <div class="nav-item active"><span class="nav-icon"></span>Transcription</div>
-        <div class="nav-item"><span class="nav-icon"></span>Scheduler</div>
-        <div class="nav-item"><span class="nav-icon"></span>Monitoring</div>
+        <button class="nav-item active" data-target="transcriptionPanel" type="button"><span class="nav-icon"></span>Transcription</button>
+        <button class="nav-item" data-target="schedulerPanel" type="button"><span class="nav-icon"></span>Scheduler</button>
+        <button class="nav-item" data-target="monitoringPanel" type="button"><span class="nav-icon"></span>Monitoring</button>
       </div>
     </aside>
 
@@ -490,22 +599,28 @@ DASHBOARD_HTML = """
           <h2>Faster Whisper Server</h2>
           <p id="subtitle">Model and scheduler status are loading</p>
         </div>
-        <div class="status-pill"><span class="status-dot"></span><span id="status">Starting</span></div>
+        <div class="top-actions">
+          <button class="secondary" id="openDocs" type="button">API Docs</button>
+          <button class="secondary" id="openMetrics" type="button">Metrics</button>
+          <div class="status-pill"><span class="status-dot"></span><span id="status">Starting</span></div>
+        </div>
       </header>
 
       <main class="content">
-        <section class="summary">
-          <div class="tile"><span>Queue</span><strong id="queue">-</strong></div>
-          <div class="tile"><span>Requests</span><strong id="requests">-</strong></div>
-          <div class="tile"><span>Errors</span><strong id="errors">-</strong></div>
-          <div class="tile"><span>Rejected</span><strong id="rejected">-</strong></div>
+        <section class="summary" id="monitoringPanel">
+          <button class="tile" data-target="schedulerPanel" type="button"><span>Queue</span><strong id="queue">-</strong></button>
+          <button class="tile" data-target="monitoringPanel" type="button"><span>Requests</span><strong id="requests">-</strong></button>
+          <button class="tile" data-target="monitoringPanel" type="button"><span>Errors</span><strong id="errors">-</strong></button>
+          <button class="tile" data-target="monitoringPanel" type="button"><span>Rejected</span><strong id="rejected">-</strong></button>
         </section>
 
         <section class="workspace">
-          <div class="panel">
+          <div class="panel" id="transcriptionPanel">
             <div class="panel-header">
               <h3>Transcription</h3>
-              <button class="secondary" id="refresh" type="button">Refresh</button>
+              <div class="panel-actions">
+                <button class="secondary" id="refresh" type="button">Refresh</button>
+              </div>
             </div>
             <div class="panel-body">
               <form id="form">
@@ -513,16 +628,31 @@ DASHBOARD_HTML = """
                   <input id="file" type="file" name="file" accept="audio/*,video/*">
                   <div>
                     <div class="upload-mark">+</div>
-                    <p class="upload-title">Choose an audio file</p>
-                    <p class="upload-meta">WAV, MP3, MP4, M4A, WEBM and other ffmpeg-supported files</p>
+                    <p class="upload-title" id="uploadTitle">Choose an audio file</p>
+                    <p class="upload-meta" id="uploadMeta">WAV, MP3, MP4, M4A, WEBM and other ffmpeg-supported files</p>
                   </div>
                 </label>
+                <div class="file-card" id="selectedFile">
+                  <div>
+                    <strong id="selectedFileName">No file selected</strong>
+                    <span id="selectedFileMeta">Waiting for an audio file</span>
+                  </div>
+                  <button class="ghost" id="clearFile" type="button">Remove</button>
+                  <div class="progress"><div id="uploadProgress"></div></div>
+                </div>
                 <div class="actions">
                   <div class="file-name" id="fileName">No file selected</div>
-                  <button id="submit" type="submit">Transcribe</button>
+                  <button id="submit" type="submit" disabled>Transcribe</button>
                 </div>
               </form>
 
+              <div class="panel-header" style="margin: 18px -18px 0; border-top: 1px solid var(--border);">
+                <h3>Result</h3>
+                <div class="panel-actions">
+                  <button class="ghost" id="copyResult" type="button">Copy</button>
+                  <button class="ghost" id="clearResult" type="button">Clear</button>
+                </div>
+              </div>
               <div id="result" class="result empty">Transcription output will appear here.</div>
 
               <div class="details">
@@ -534,8 +664,11 @@ DASHBOARD_HTML = """
           </div>
 
           <aside class="side-stack">
-            <div class="panel">
-              <div class="panel-header"><h3>Model</h3></div>
+            <div class="panel" id="modelPanel">
+              <div class="panel-header">
+                <h3>Model</h3>
+                <button class="ghost" id="openModel" type="button">Open</button>
+              </div>
               <div class="panel-body">
                 <dl>
                   <dt>Model</dt><dd id="model">-</dd>
@@ -546,8 +679,11 @@ DASHBOARD_HTML = """
               </div>
             </div>
 
-            <div class="panel">
-              <div class="panel-header"><h3>Scheduler</h3></div>
+            <div class="panel" id="schedulerPanel">
+              <div class="panel-header">
+                <h3>Scheduler</h3>
+                <button class="ghost" id="refreshScheduler" type="button">Refresh</button>
+              </div>
               <div class="panel-body">
                 <dl>
                   <dt>Batch size</dt><dd id="batch">-</dd>
@@ -569,6 +705,8 @@ DASHBOARD_HTML = """
     const dropzone = $("dropzone");
     const submit = $("submit");
     const result = $("result");
+    let selectedFile = null;
+    let latestTranscription = "";
 
     function parseMetrics(text) {
       const metrics = {};
@@ -581,10 +719,88 @@ DASHBOARD_HTML = """
     }
 
     function setResult(text, isError = false) {
+      latestTranscription = isError ? "" : text;
       result.classList.toggle("empty", !text);
-      result.innerHTML = isError
-        ? `<span class="error">${text}</span>`
-        : text || "Transcription output will appear here.";
+      result.textContent = text || "Transcription output will appear here.";
+      result.classList.toggle("error", isError);
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes) return "0 B";
+      const units = ["B", "KB", "MB", "GB"];
+      const index = Math.min(
+        Math.floor(Math.log(bytes) / Math.log(1024)),
+        units.length - 1
+      );
+      return `${(bytes / Math.pow(1024, index)).toFixed(index ? 2 : 0)} ${units[index]}`;
+    }
+
+    function setUploadProgress(percent, label) {
+      $("uploadProgress").style.width = `${Math.max(0, Math.min(percent, 100))}%`;
+      if (label) {
+        $("selectedFileMeta").textContent = label;
+      }
+    }
+
+    function selectFile(file) {
+      selectedFile = file || null;
+      submit.disabled = !selectedFile;
+      dropzone.classList.toggle("has-file", Boolean(selectedFile));
+      $("selectedFile").classList.toggle("visible", Boolean(selectedFile));
+      $("fileName").textContent = selectedFile
+        ? selectedFile.name
+        : "No file selected";
+      $("selectedFileName").textContent = selectedFile
+        ? selectedFile.name
+        : "No file selected";
+      $("selectedFileMeta").textContent = selectedFile
+        ? `${formatBytes(selectedFile.size)} selected and ready to upload`
+        : "Waiting for an audio file";
+      $("uploadTitle").textContent = selectedFile
+        ? "Audio file selected"
+        : "Choose an audio file";
+      $("uploadMeta").textContent = selectedFile
+        ? "Ready to transcribe. You can replace it by choosing another file."
+        : "WAV, MP3, MP4, M4A, WEBM and other ffmpeg-supported files";
+      setUploadProgress(selectedFile ? 100 : 0);
+    }
+
+    function transcribeWithProgress(form) {
+      return new Promise((resolve, reject) => {
+        const request = new XMLHttpRequest();
+        request.open("POST", "/transcribe");
+        request.upload.onprogress = (event) => {
+          if (!event.lengthComputable) {
+            setUploadProgress(15, "Uploading");
+            return;
+          }
+          const percent = Math.round((event.loaded / event.total) * 100);
+          setUploadProgress(percent, `Uploading ${percent}%`);
+        };
+        request.onload = () => {
+          let payload = {};
+          try {
+            payload = JSON.parse(request.responseText || "{}");
+          } catch (error) {
+            reject(new Error("Server returned an invalid response"));
+            return;
+          }
+
+          if (request.status < 200 || request.status >= 300) {
+            reject(new Error(payload.detail || "Transcription failed"));
+            return;
+          }
+          resolve(payload);
+        };
+        request.onerror = () => reject(new Error("Network error"));
+        request.send(form);
+      });
+    }
+
+    function scrollToPanel(id) {
+      const target = $(id);
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
     async function refresh() {
@@ -612,43 +828,73 @@ DASHBOARD_HTML = """
       $("timeout").textContent = `${model.request_timeout_seconds} s`;
     }
 
-    fileInput.addEventListener("change", () => {
-      const file = fileInput.files[0];
-      $("fileName").textContent = file ? file.name : "No file selected";
-    });
+    fileInput.addEventListener("change", () => selectFile(fileInput.files[0]));
 
     ["dragenter", "dragover"].forEach((eventName) => {
-      dropzone.addEventListener(eventName, () => dropzone.classList.add("active"));
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault();
+        dropzone.classList.add("active");
+      });
     });
 
-    ["dragleave", "drop"].forEach((eventName) => {
-      dropzone.addEventListener(eventName, () => dropzone.classList.remove("active"));
+    dropzone.addEventListener("dragleave", () => {
+      dropzone.classList.remove("active");
     });
 
+    dropzone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      dropzone.classList.remove("active");
+      selectFile(event.dataTransfer.files[0]);
+    });
+
+    document.querySelectorAll("[data-target]").forEach((item) => {
+      item.addEventListener("click", () => {
+        document.querySelectorAll(".nav-item").forEach((navItem) => {
+          navItem.classList.toggle("active", navItem === item);
+        });
+        scrollToPanel(item.dataset.target);
+      });
+    });
+
+    $("openDocs").addEventListener("click", () => window.open("/docs", "_blank"));
+    $("openMetrics").addEventListener("click", () => window.open("/metrics", "_blank"));
+    $("openModel").addEventListener("click", () => window.open("/model", "_blank"));
+    $("refreshScheduler").addEventListener("click", refresh);
     $("refresh").addEventListener("click", refresh);
+    $("clearFile").addEventListener("click", () => {
+      fileInput.value = "";
+      selectFile(null);
+    });
+    $("copyResult").addEventListener("click", async () => {
+      if (!latestTranscription) return;
+      await navigator.clipboard.writeText(latestTranscription);
+      $("copyResult").textContent = "Copied";
+      setTimeout(() => ($("copyResult").textContent = "Copy"), 1200);
+    });
+    $("clearResult").addEventListener("click", () => {
+      latestTranscription = "";
+      $("language").textContent = "-";
+      $("duration").textContent = "-";
+      setResult("");
+    });
+
     $("form").addEventListener("submit", async (event) => {
       event.preventDefault();
-      const file = fileInput.files[0];
+      const file = selectedFile;
       if (!file) return;
 
       const form = new FormData();
       form.append("file", file);
       submit.disabled = true;
       submit.textContent = "Running";
+      setUploadProgress(0, `${formatBytes(file.size)} selected. Upload starting`);
       setResult("");
       $("language").textContent = "-";
       $("duration").textContent = "-";
 
       try {
-        const response = await fetch("/transcribe", {
-          method: "POST",
-          body: form,
-        });
-        const payload = await response.json();
-        if (!response.ok) {
-          throw new Error(payload.detail || "Transcription failed");
-        }
-
+        const payload = await transcribeWithProgress(form);
+        setUploadProgress(100, "Uploaded. Transcription completed");
         result.classList.remove("empty");
         setResult(payload.text || "");
         $("language").textContent = payload.language || "-";
@@ -656,6 +902,7 @@ DASHBOARD_HTML = """
           ? `${payload.duration.toFixed(2)} s`
           : "-";
       } catch (error) {
+        setUploadProgress(100, "Upload or transcription failed");
         setResult(error.message, true);
       } finally {
         submit.disabled = false;
@@ -664,6 +911,7 @@ DASHBOARD_HTML = """
       }
     });
 
+    selectFile(null);
     refresh();
   </script>
 </body>
