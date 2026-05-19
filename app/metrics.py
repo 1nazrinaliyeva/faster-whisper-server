@@ -9,6 +9,8 @@ class EngineMetrics:
 
     def __init__(self):
         self.registry = CollectorRegistry()
+        self._batch_size_total = 0
+        self._batches_observed = 0
         self.requests_total = Counter(
             "requests_total",
             "Total transcription requests accepted.",
@@ -44,14 +46,18 @@ class EngineMetrics:
             "Current number of accepted requests waiting for a response.",
             registry=self.registry,
         )
-        self.batch_size = Histogram(
+        self.batch_size = Gauge(
             "batch_size",
-            "Scheduler batch size.",
-            buckets=(1, 2, 4, 8, 16, 32),
+            "Most recent scheduler batch size.",
             registry=self.registry,
         )
-        self.inference_time_seconds = Histogram(
-            "inference_time_seconds",
+        self.batch_size_average = Gauge(
+            "batch_size_average",
+            "Average scheduler batch size.",
+            registry=self.registry,
+        )
+        self.batch_inference_time_seconds = Histogram(
+            "batch_inference_time_seconds",
             "Batch inference time in seconds.",
             buckets=(0.1, 0.5, 1, 2.5, 5, 10, 30, 60, 120),
             registry=self.registry,
@@ -78,8 +84,11 @@ class EngineMetrics:
 
     def record_batch(self, batch_size: int, inference_time_seconds: float) -> None:
         self.batches_total.inc()
-        self.batch_size.observe(batch_size)
-        self.inference_time_seconds.observe(inference_time_seconds)
+        self._batch_size_total += batch_size
+        self._batches_observed += 1
+        self.batch_size.set(batch_size)
+        self.batch_size_average.set(self._batch_size_total / self._batches_observed)
+        self.batch_inference_time_seconds.observe(inference_time_seconds)
 
     def record_queue_wait(self, queue_wait_seconds: float) -> None:
         self.queue_wait_time_seconds.observe(queue_wait_seconds)

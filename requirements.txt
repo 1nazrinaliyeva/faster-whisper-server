@@ -1,5 +1,6 @@
 fastapi
 faster-whisper
+httpx
 prometheus-client
 python-multipart
 uvicorn

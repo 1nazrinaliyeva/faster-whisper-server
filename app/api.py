@@ -1,12 +1,25 @@
+import os
 import tempfile
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from app.async_engine import AsyncWhisperEngine, QueueFullError, RequestTimeoutError
+from app.async_engine import (
+    AsyncWhisperEngine,
+    QueueFullError,
+    RequestTimeoutError,
+    ServerShuttingDownError,
+)
 
 
-def create_router(engine: AsyncWhisperEngine) -> APIRouter:
+UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+class UploadTooLargeError(Exception):
+    pass
+
+
+def create_router(engine: AsyncWhisperEngine, max_upload_size_mb: int) -> APIRouter:
     router = APIRouter()
 
     @router.get("/health")
@@ -16,6 +29,7 @@ def create_router(engine: AsyncWhisperEngine) -> APIRouter:
             "queue_size": engine.queue_size,
             "max_batch_size": engine.max_batch_size,
             "max_wait_ms": int(engine.max_wait_seconds * 1000),
+            "max_upload_size_mb": max_upload_size_mb,
         }
 
     @router.get("/model")
@@ -44,7 +58,7 @@ def create_router(engine: AsyncWhisperEngine) -> APIRouter:
 
     @router.post("/transcribe")
     async def transcribe(file: UploadFile = File(...)):
-        return await _transcribe_upload(engine, file)
+        return await _transcribe_upload(engine, file, max_upload_size_mb)
 
     @router.post("/v1/audio/transcriptions")
     async def create_transcription(
@@ -52,27 +66,70 @@ def create_router(engine: AsyncWhisperEngine) -> APIRouter:
         model: str | None = Form(default=None),
     ):
         _ = model
-        return await _transcribe_upload(engine, file)
+        return await _transcribe_upload(engine, file, max_upload_size_mb)
 
     return router
 
 
-async def _transcribe_upload(engine: AsyncWhisperEngine, file: UploadFile) -> dict:
-    temp_path = await _save_upload_to_temp_file(file)
+async def _transcribe_upload(
+    engine: AsyncWhisperEngine,
+    file: UploadFile,
+    max_upload_size_mb: int,
+) -> dict:
+    temp_path = None
+    submitted_to_engine = False
 
     try:
+        temp_path = await _save_upload_to_temp_file(file, max_upload_size_mb)
+        submitted_to_engine = True
         return await engine.transcribe(temp_path)
+    except UploadTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except QueueFullError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
     except RequestTimeoutError as exc:
         raise HTTPException(status_code=504, detail=str(exc)) from exc
+    except ServerShuttingDownError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    finally:
+        if temp_path is not None and not submitted_to_engine:
+            _safe_remove(temp_path)
 
 
-async def _save_upload_to_temp_file(file: UploadFile) -> str:
+async def _save_upload_to_temp_file(
+    file: UploadFile,
+    max_upload_size_mb: int,
+) -> str:
     suffix = file.filename.split(".")[-1] if file.filename else "audio"
+    max_upload_bytes = max_upload_size_mb * 1024 * 1024
+    bytes_written = 0
 
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{suffix}") as temp:
-        temp.write(await file.read())
-        return temp.name
+    temp = tempfile.NamedTemporaryFile(delete=False, suffix=f".{suffix}")
+    temp_path = temp.name
+
+    should_remove = False
+    try:
+        while chunk := await file.read(UPLOAD_CHUNK_SIZE):
+            bytes_written += len(chunk)
+            if bytes_written > max_upload_bytes:
+                raise UploadTooLargeError(
+                    f"upload exceeds MAX_UPLOAD_SIZE_MB={max_upload_size_mb}"
+                )
+            temp.write(chunk)
+        return temp_path
+    except Exception:
+        should_remove = True
+        raise
+    finally:
+        temp.close()
+        if should_remove:
+            _safe_remove(temp_path)
+
+
+def _safe_remove(path: str) -> None:
+    try:
+        os.remove(path)
+    except FileNotFoundError:
+        pass

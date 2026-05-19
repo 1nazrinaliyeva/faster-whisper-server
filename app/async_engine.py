@@ -21,6 +21,10 @@ class RequestTimeoutError(Exception):
     pass
 
 
+class ServerShuttingDownError(Exception):
+    pass
+
+
 @dataclass
 class TranscriptionRequest:
     audio_path: str
@@ -38,6 +42,7 @@ class AsyncWhisperEngine:
         max_wait_ms: int = 100,
         queue_max_size: int = 128,
         request_timeout_seconds: float = 300,
+        shutdown_timeout_seconds: float = 30,
     ):
         self.model_size = model_size
         self.device = device
@@ -46,17 +51,20 @@ class AsyncWhisperEngine:
         self.max_wait_seconds = max_wait_ms / 1000
         self.queue_max_size = queue_max_size
         self.request_timeout_seconds = request_timeout_seconds
+        self.shutdown_timeout_seconds = shutdown_timeout_seconds
         self.metrics = EngineMetrics()
         self._engine = WhisperEngine(
             model_size=model_size,
             device=device,
             compute_type=compute_type,
         )
-        self._queue: asyncio.Queue[TranscriptionRequest] = asyncio.Queue(
+        self._queue: asyncio.Queue[Optional[TranscriptionRequest]] = asyncio.Queue(
             maxsize=queue_max_size
         )
         self._scheduler_task: Optional[asyncio.Task] = None
         self._stopping = asyncio.Event()
+        self._accepting_requests = False
+        self._shutdown_started = False
 
     @classmethod
     def from_settings(cls, settings: Settings):
@@ -68,6 +76,7 @@ class AsyncWhisperEngine:
             max_wait_ms=settings.max_wait_ms,
             queue_max_size=settings.queue_max_size,
             request_timeout_seconds=settings.request_timeout_seconds,
+            shutdown_timeout_seconds=settings.shutdown_timeout_seconds,
         )
 
     @property
@@ -83,27 +92,57 @@ class AsyncWhisperEngine:
             "max_wait_ms": int(self.max_wait_seconds * 1000),
             "queue_max_size": self.queue_max_size,
             "request_timeout_seconds": self.request_timeout_seconds,
+            "shutdown_timeout_seconds": self.shutdown_timeout_seconds,
             "queue_size": self.queue_size,
             "batched_pipeline": self._engine.uses_batched_pipeline,
+            "model_is_local": self._engine.model_is_local,
         }
 
     async def start(self) -> None:
+        self._shutdown_started = False
+        self._accepting_requests = True
         if self._scheduler_task is None or self._scheduler_task.done():
             self._stopping.clear()
             self._scheduler_task = asyncio.create_task(self._scheduler_loop())
 
     async def stop(self) -> None:
+        # Shutdown has three phases:
+        # 1. Stop accepting new requests so no new temp files enter the queue.
+        # 2. Cancel queued work that has not reached inference yet and remove files.
+        # 3. Wake the scheduler, let any active batch finish, then cancel if it hangs.
+        self._shutdown_started = True
+        self._accepting_requests = False
         self._stopping.set()
+        self._cancel_queued_requests()
+
         if self._scheduler_task is not None:
-            self._scheduler_task.cancel()
+            await self._queue.put(None)
             try:
-                await self._scheduler_task
-            except asyncio.CancelledError:
-                pass
+                await asyncio.wait_for(
+                    self._scheduler_task,
+                    timeout=self.shutdown_timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                self._scheduler_task.cancel()
+                try:
+                    await self._scheduler_task
+                except asyncio.CancelledError:
+                    pass
 
     async def transcribe(self, audio_path: str) -> dict:
-        await self.start()
+        if self._shutdown_started:
+            _safe_remove(audio_path)
+            raise ServerShuttingDownError("server is shutting down")
+
+        if self._scheduler_task is None or self._scheduler_task.done():
+            await self.start()
+
         loop = asyncio.get_running_loop()
+
+        if not self._accepting_requests:
+            _safe_remove(audio_path)
+            raise ServerShuttingDownError("server is shutting down")
+
         future = loop.create_future()
         request = TranscriptionRequest(
             audio_path=audio_path,
@@ -117,7 +156,12 @@ class AsyncWhisperEngine:
             raise QueueFullError("transcription queue is full")
 
         self.metrics.record_request()
-        self._queue.put_nowait(request)
+        try:
+            self._queue.put_nowait(request)
+        except asyncio.QueueFull as exc:
+            self.metrics.record_rejection()
+            _safe_remove(audio_path)
+            raise QueueFullError("transcription queue is full") from exc
 
         try:
             return await asyncio.wait_for(
@@ -130,8 +174,11 @@ class AsyncWhisperEngine:
             raise RequestTimeoutError("transcription request timed out") from exc
 
     async def _scheduler_loop(self) -> None:
-        while not self._stopping.is_set():
+        while True:
             request = await self._get_next_active_request()
+            if request is None:
+                break
+
             batch = [request]
             deadline = asyncio.get_running_loop().time() + self.max_wait_seconds
 
@@ -145,6 +192,9 @@ class AsyncWhisperEngine:
                         self._get_next_active_request(),
                         timeout,
                     )
+                    if next_request is None:
+                        self._stopping.set()
+                        break
                     batch.append(next_request)
                 except asyncio.TimeoutError:
                     break
@@ -155,9 +205,16 @@ class AsyncWhisperEngine:
 
             await self._run_batch(batch)
 
-    async def _get_next_active_request(self) -> TranscriptionRequest:
+            if self._stopping.is_set() and self._queue.empty():
+                break
+
+    async def _get_next_active_request(self) -> Optional[TranscriptionRequest]:
         while True:
             request = await self._queue.get()
+            if request is None:
+                self._queue.task_done()
+                return None
+
             if not request.future.cancelled():
                 return request
 
@@ -216,6 +273,17 @@ class AsyncWhisperEngine:
                             loop.time() - request.submitted_at
                         )
                         request.future.set_result(result)
+        except asyncio.CancelledError as exc:
+            self.metrics.record_error(len(batch))
+            for request in batch:
+                if not request.future.done():
+                    self.metrics.record_request_latency(
+                        loop.time() - request.submitted_at
+                    )
+                    request.future.set_exception(
+                        ServerShuttingDownError("server shutdown cancelled inference")
+                    )
+            raise exc
         except Exception as exc:
             self.metrics.record_error(len(batch))
             logger.exception("transcription batch failed")
@@ -229,6 +297,29 @@ class AsyncWhisperEngine:
             for request in batch:
                 self._queue.task_done()
                 _safe_remove(request.audio_path)
+
+    def _cancel_queued_requests(self) -> None:
+        while True:
+            try:
+                request = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+
+            try:
+                if request is None:
+                    continue
+
+                if not request.future.done():
+                    self.metrics.record_error()
+                    self.metrics.record_request_latency(
+                        asyncio.get_running_loop().time() - request.submitted_at
+                    )
+                    request.future.set_exception(
+                        ServerShuttingDownError("server is shutting down")
+                    )
+                _safe_remove(request.audio_path)
+            finally:
+                self._queue.task_done()
 
 
 def _safe_remove(path: str) -> None:

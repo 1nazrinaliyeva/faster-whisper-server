@@ -11,6 +11,8 @@ class Settings:
     max_wait_ms: int = 100
     queue_max_size: int = 128
     request_timeout_seconds: float = 300
+    shutdown_timeout_seconds: float = 30
+    max_upload_size_mb: int = 512
     log_level: str = "INFO"
 
 
@@ -23,6 +25,8 @@ def get_settings() -> Settings:
         max_wait_ms=_get_int("MAX_WAIT_MS", 100),
         queue_max_size=_get_int("QUEUE_MAX_SIZE", 128),
         request_timeout_seconds=_get_float("REQUEST_TIMEOUT_SECONDS", 300),
+        shutdown_timeout_seconds=_get_float("SHUTDOWN_TIMEOUT_SECONDS", 30),
+        max_upload_size_mb=_get_int("MAX_UPLOAD_SIZE_MB", 512),
         log_level=os.getenv("LOG_LEVEL", "INFO"),
     )
 

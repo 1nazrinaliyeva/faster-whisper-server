@@ -23,4 +23,4 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Faster Whisper Server", lifespan=lifespan)
 app.include_router(create_ui_router())
-app.include_router(create_router(engine))
+app.include_router(create_router(engine, max_upload_size_mb=settings.max_upload_size_mb))

@@ -1,3 +1,5 @@
+import os
+
 from faster_whisper import WhisperModel
 
 try:
@@ -8,6 +10,8 @@ except ImportError:
 
 class WhisperEngine:
     def __init__(self, model_size="small", device="cpu", compute_type="int8"):
+        self.model_name_or_path = model_size
+        self.model_is_local = os.path.isdir(model_size)
         self.model = WhisperModel(
             model_size,
             device=device,
